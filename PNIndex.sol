@@ -186,33 +186,24 @@ contract PNIndex is TokenBase {
     }
     
     function mint(uint amount0, uint amount1) public returns (uint256 indexAmount, uint256 amount0S, uint256 amount1S) {
-        require(amount1 != 0, "Token1 amount is equal to zero.");
-        require(amount0 != 0, "Token0 amount is equal to zero.");
-        (uint256 amount0R, uint256 amount1R,) = pair.getReserves();
-        amount1S = (amount0.div(2)).mul(amount1R).div(amount0R);
-        
-        if(amount1S < amount1) {
-            amount0S = amount0;
-            indexAmount =  _mint(amount0, amount1S);
-        } else {
-            amount0S = (amount1.mul(2)).mul(amount0R).div(amount1R);
-            amount1S = amount1;
-            indexAmount =  _mint(amount0S, amount1);
-        }
+        (indexAmount, amount0S, amount1S) = _mint(amount0, amount1, false);
     }
     
     function mintAndConvert(uint amount, address convertToken) public returns (uint indexAmount) {
-        uint256 amount0 = amount.mul(2).div(3);
+        TransferHelper.safeTransferFrom(convertToken, msg.sender, address(this), amount);
+        TransferHelper.safeApprove(convertToken, address(router), amount);
+        uint256 amount0 = (amount.mul(2)).div(3);
         uint256 amount1 = amount.div(3);
         address[] memory addresses = new address[](2);
-        addresses[0] = convertToken;
-        addresses[1] = token0; 
+        addresses[0] = convertToken; //addresses[1] = convertToken;
+        addresses[1] = token0; //addresses[0] = token0
         uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, msg.sender, block.timestamp + 3600);
-        addresses[1] = token1; 
+        addresses[1] = token1; //addresses[0] = token1
         uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, msg.sender, block.timestamp + 3600);
         uint256 amount0S;
         uint256 amount1S;
-        (indexAmount, amount0S, amount1S) = mint(amounts0[1], amounts1[1]);
+        
+        (indexAmount, amount0S, amount1S) = _mint(amounts0[1], amounts1[1], true);
         
         if(amount0S < amounts0[1]) {
             TransferHelper.safeTransfer(token0, msg.sender, amounts0[1] - amount0S);
@@ -284,7 +275,10 @@ contract PNIndex is TokenBase {
     function burnAndConvert(uint amount, address convertToken) public returns (uint amountConverted) {
         require(amount != 0, "Index token amount is equal to zero.");
         require(_balances[msg.sender] >= amount, "Not enough index token.");
+
         (uint256 amount0, uint256 amount1) = getBurnAmount(amount);
+        TransferHelper.safeApprove(token0, address(router), amount0);
+        TransferHelper.safeApprove(token1, address(router), amount1);
         address[] memory addresses = new address[](2);
         addresses[0] = token0;
         addresses[1] = convertToken;
@@ -319,8 +313,8 @@ contract PNIndex is TokenBase {
     function getAmountOutConvert(uint amount, address convertToken) public view returns (uint indexAmount) {
         uint256 amount0 = (amount.mul(2)).div(3);
         address[] memory addresses = new address[](2);
-        addresses[1] = token0; 
-        addresses[0] = convertToken; 
+        addresses[1] = token0; // addresses[0] = token0;
+        addresses[0] = convertToken; //addresses[0] = convertToken;
         uint256 amounts0 = router.getAmountsOut(amount0, addresses)[1];
         (, indexAmount) = getAmountOut(amounts0, true);
     }
@@ -335,11 +329,14 @@ contract PNIndex is TokenBase {
         amountConverted = amountConverted.add(router.getAmountsOut(amount1, addresses)[1]);
     }
     
-    function _mint(uint256 amount0, uint256 amount1) private returns (uint256 indexAmount) {
+    function _prepareMint(uint256 amount0, uint256 amount1, bool isConvert) private returns (uint256 indexAmount) {
         require(amount0 != 0 && amount1 != 0, "Adjusted token amount is equal to zero.");
-        TransferHelper.safeTransferFrom(token0, msg.sender, address(this), amount0);
-        TransferHelper.safeTransferFrom(token1, msg.sender, address(this), amount1);
-
+        
+        if(!isConvert) {
+            TransferHelper.safeTransferFrom(token0, msg.sender, address(this), amount0);
+            TransferHelper.safeTransferFrom(token1, msg.sender, address(this), amount1);
+        }
+        
         uint256 amount = Math.sqrt(SafeMath.mul(amount0, amount1));
         _balances[msg.sender] = _balances[msg.sender].add(amount);
         _totalSupply = _totalSupply.add(amount);
@@ -348,4 +345,21 @@ contract PNIndex is TokenBase {
         
         return amount;
     }
+    
+    function _mint(uint amount0, uint amount1, bool isConvert) private returns (uint256 indexAmount, uint256 amount0S, uint256 amount1S) {
+        require(amount1 != 0, "Token1 amount is equal to zero.");
+        require(amount0 != 0, "Token0 amount is equal to zero.");
+        (uint256 amount0R, uint256 amount1R,) = pair.getReserves();
+        amount1S = (amount0.div(2)).mul(amount1R).div(amount0R);
+        
+        if(amount1S < amount1) {
+            amount0S = amount0;
+            indexAmount =  _prepareMint(amount0, amount1S, isConvert);
+        } else {
+            amount0S = (amount1.mul(2)).mul(amount0R).div(amount1R);
+            amount1S = amount1;
+            indexAmount =  _prepareMint(amount0S, amount1, isConvert);
+        }
+    }
+    
 }
