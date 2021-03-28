@@ -195,11 +195,11 @@ contract PNIndex is TokenBase {
         uint256 amount0 = (amount.mul(2)).div(3);
         uint256 amount1 = amount.div(3);
         address[] memory addresses = new address[](2);
-        addresses[0] = convertToken; //addresses[1] = convertToken;
-        addresses[1] = token0; //addresses[0] = token0
-        uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, msg.sender, block.timestamp + 3600);
-        addresses[1] = token1; //addresses[0] = token1
-        uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, msg.sender, block.timestamp + 3600);
+        addresses[0] = convertToken;
+        addresses[1] = token0;
+        uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, address(this), block.timestamp + 3600);
+        addresses[1] = token1;
+        uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, address(this), block.timestamp + 3600);
         uint256 amount0S;
         uint256 amount1S;
         
@@ -313,8 +313,8 @@ contract PNIndex is TokenBase {
     function getAmountOutConvert(uint amount, address convertToken) public view returns (uint indexAmount) {
         uint256 amount0 = (amount.mul(2)).div(3);
         address[] memory addresses = new address[](2);
-        addresses[1] = token0; // addresses[0] = token0;
-        addresses[0] = convertToken; //addresses[0] = convertToken;
+        addresses[1] = token0;
+        addresses[0] = convertToken;
         uint256 amounts0 = router.getAmountsOut(amount0, addresses)[1];
         (, indexAmount) = getAmountOut(amounts0, true);
     }
