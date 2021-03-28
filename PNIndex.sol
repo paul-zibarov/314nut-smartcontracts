@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.0;
+pragma solidity =0.7.6;
 
 library TransferHelper {
     function safeApprove(address token, address to, uint value) internal {
@@ -84,6 +84,8 @@ interface IERC20 {
 
 interface IPair {
     function getReserves() external view returns (uint256 reserve0, uint256 reserve1, uint256 timestamp);
+    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
+
 }
 
 interface IRouter {
@@ -101,12 +103,12 @@ interface IRouter {
 contract TokenBase is IERC20 {
     using SafeMath for uint;
     
-    string private _name = "PNToken";
-    string private _symbol = "PNT";
-    uint8 private _decimals = 18;
-    uint256 public _totalSupply;
-    mapping (address => uint256) public _balances;
-    mapping (address => mapping (address => uint256)) public _allowances;
+    string internal _name = "PNToken";
+    string internal _symbol = "PNT";
+    uint8 internal _decimals = 18;
+    uint256 internal _totalSupply;
+    mapping (address => uint256) internal _balances;
+    mapping (address => mapping (address => uint256)) internal _allowances;
     
     event Mint(address indexed owner, uint indexAmount, uint amount0, uint amount1);
     event Burn(address indexed owner, uint indexAmount, uint amount0, uint amount1);
@@ -173,6 +175,8 @@ contract PNIndex is TokenBase {
     IPair immutable public pair;
     IRouter immutable public router;
     
+    address constant public factory = 0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f;
+    
     constructor(
         address _token0, 
         address _token1,
@@ -191,15 +195,17 @@ contract PNIndex is TokenBase {
     
     function mintAndConvert(uint amount, address convertToken) public returns (uint indexAmount) {
         TransferHelper.safeTransferFrom(convertToken, msg.sender, address(this), amount);
-        TransferHelper.safeApprove(convertToken, address(router), amount);
+        //TransferHelper.safeApprove(convertToken, address(router), amount);
         uint256 amount0 = (amount.mul(2)).div(3);
         uint256 amount1 = amount.div(3);
         address[] memory addresses = new address[](2);
         addresses[0] = convertToken;
         addresses[1] = token0;
-        uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, address(this), block.timestamp + 3600);
+        //uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, address(this), block.timestamp + 3600);
+        uint256[] memory amounts0 = _swapExactTokensForTokens(amount0, 0, addresses, address(this));
         addresses[1] = token1;
-        uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, address(this), block.timestamp + 3600);
+        //uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, address(this), block.timestamp + 3600);
+        uint256[] memory amounts1 = _swapExactTokensForTokens(amount1, 0, addresses, address(this));
         uint256 amount0S;
         uint256 amount1S;
         
@@ -282,9 +288,11 @@ contract PNIndex is TokenBase {
         address[] memory addresses = new address[](2);
         addresses[0] = token0;
         addresses[1] = convertToken;
-        uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, msg.sender, block.timestamp + 3600);
+        //uint256[] memory amounts0 = router.swapExactTokensForTokens(amount0, 0, addresses, msg.sender, block.timestamp + 3600);
+        uint256[] memory amounts0 = _swapExactTokensForTokens(amount0, 0, addresses, msg.sender);
         addresses[0] = token1;
-        uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, msg.sender, block.timestamp + 3600);
+        //uint256[] memory amounts1 = router.swapExactTokensForTokens(amount1, 0, addresses, msg.sender, block.timestamp + 3600);
+        uint256[] memory amounts1 = _swapExactTokensForTokens(amount1, 0, addresses, msg.sender);
         amountConverted = amounts0[1].add(amounts1[1]);
         _balances[msg.sender] = _balances[msg.sender].sub(amount);
         _totalSupply = _totalSupply.sub(amount);
@@ -360,6 +368,75 @@ contract PNIndex is TokenBase {
             amount1S = amount1;
             indexAmount =  _prepareMint(amount0S, amount1, isConvert);
         }
+    }
+    
+    //UNISWAP implementation
+    function _swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] memory path,
+        address to
+    ) private returns (uint[] memory amounts) {
+        amounts = _getAmountsOut(amountIn, path);
+        require(amounts[amounts.length - 1] >= amountOutMin, 'UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT');
+        TransferHelper.safeTransfer(
+            path[0], _pairFor(path[0], path[1]), amounts[0]
+        );
+        _swap(amounts, path, to);
+    }
+    
+    function _swap(uint[] memory amounts, address[] memory path, address _to) internal virtual {
+        for (uint i; i < path.length - 1; i++) {
+            (address input, address output) = (path[i], path[i + 1]);
+            (address token0,) = _sortTokens(input, output);
+            uint amountOut = amounts[i + 1];
+            (uint amount0Out, uint amount1Out) = input == token0 ? (uint(0), amountOut) : (amountOut, uint(0));
+            address to = i < path.length - 2 ? _pairFor(output, path[i + 2]) : _to;
+            IPair(_pairFor(input, output)).swap(
+                amount0Out, amount1Out, to, new bytes(0)
+            );
+        }
+    }
+    
+    function _sortTokens(address tokenA, address tokenB) internal pure returns (address token0, address token1) {
+        require(tokenA != tokenB, 'UniswapV2Library: IDENTICAL_ADDRESSES');
+        (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        require(token0 != address(0), 'UniswapV2Library: ZERO_ADDRESS');
+    }
+    
+    function _pairFor(address tokenA, address tokenB) private pure returns (address pair) {
+        (address token0, address token1) = _sortTokens(tokenA, tokenB);
+        pair = address(uint(keccak256(abi.encodePacked(
+                hex'ff',
+                factory,
+                keccak256(abi.encodePacked(token0, token1)),
+                hex'96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f' // init code hash
+            ))));
+    }
+    
+    function _getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
+        require(amountIn > 0, 'UniswapV2Library: INSUFFICIENT_INPUT_AMOUNT');
+        require(reserveIn > 0 && reserveOut > 0, 'UniswapV2Library: INSUFFICIENT_LIQUIDITY');
+        uint amountInWithFee = amountIn.mul(997);
+        uint numerator = amountInWithFee.mul(reserveOut);
+        uint denominator = reserveIn.mul(1000).add(amountInWithFee);
+        amountOut = numerator / denominator;
+    }
+    
+    function _getAmountsOut(uint amountIn, address[] memory path) internal view returns (uint[] memory amounts) {
+        require(path.length >= 2, 'UniswapV2Library: INVALID_PATH');
+        amounts = new uint[](path.length);
+        amounts[0] = amountIn;
+        for (uint i; i < path.length - 1; i++) {
+            (uint reserveIn, uint reserveOut) = _getReserves(factory, path[i], path[i + 1]);
+            amounts[i + 1] = _getAmountOut(amounts[i], reserveIn, reserveOut);
+        }
+    }
+    
+    function _getReserves(address factory, address tokenA, address tokenB) internal view returns (uint reserveA, uint reserveB) {
+        (address token0,) = _sortTokens(tokenA, tokenB);
+        (uint reserve0, uint reserve1,) = IPair(_pairFor(tokenA, tokenB)).getReserves();
+        (reserveA, reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
     }
     
 }
