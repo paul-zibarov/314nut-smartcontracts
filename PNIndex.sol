@@ -317,7 +317,7 @@ contract PNIndex is TokenBase {
     }
     
     function getAmountOutConvert(uint amount, address convertToken) public view returns (uint indexAmount) {
-        uint256 amount0 = amount.mul(2).div(3);
+        uint256 amount0 = (amount.mul(2)).div(3);
         address[] memory addresses = new address[](2);
         addresses[0] = token0;
         addresses[1] = convertToken;
@@ -331,7 +331,7 @@ contract PNIndex is TokenBase {
         addresses[0] = token0;
         addresses[1] = convertToken;
         amountConverted = router.getAmountsOut(amount0, addresses)[1];
-        addresses[1] = token1;
+        addresses[0] = token1;
         amountConverted = amountConverted.add(router.getAmountsOut(amount1, addresses)[1]);
     }
     
